@@ -29,8 +29,8 @@ Pushing to `main` updates https://megantoday.github.io/Fishing-battle/ within
 
 ## Design (locked from prompt)
 
-- **Day/night cycle:** 10 min day, 10 min night (real time). Closing the tab
-  pauses; idle catch-up caps at 30 minutes.
+- **Day/night cycle:** 5 min day, 5 min night (real time). Closing the tab
+  pauses; idle catch-up caps at 30 minutes (only earns income if you own a boat).
 - **End of day:** modal report (catch breakdown, earnings, battle log) + choice:
   skip night → next day, or fish through night for ×2 fish + ×2 pirate attacks.
 - **View:** top-down (slight tilt later for boat detail).
@@ -47,39 +47,47 @@ Pushing to `main` updates https://megantoday.github.io/Fishing-battle/ within
 - **Rivals:** AI-only, visibly grow on the map, can be raided once you're
   strong enough.
 
-## What's in v1 (current build)
+## What's in v2 (current build)
 
-- Single fishing boat in coastal waters, top-down.
-- WASD/arrows to move, click water to cast, click again to reel, SPACE to fire
-  cannon.
-- Random fish species with varied sell values (no rarity tier per design).
-- Day/night phase timer with end-of-day modal and skip-night vs fish-night
-  decision.
-- Pirates start spawning on day 3 and intensify; double rate at night.
-- Player ship has hull HP; sinking respawns and loses half of today's catch.
-- Idle catch-up (30-min cap) when returning to the tab.
-- localStorage save every 5s and on day end.
+- **Start on land** at the harbor with a Hand Line rod; no boat yet.
+- **Two scenes** that share state:
+  - **Harbor:** walk on land + dock with WASD/arrows; click water from the
+    dock edge to cast; press **E** near shop or boat to interact.
+  - **Sea:** sail with WASD/arrows, SPACE to fire cannon, E inside the harbor
+    zone to dock back.
+- **Shop** in the harbor sells rod upgrades (Sturdy → Quality → Pro, with
+  better cast range / bite speed / sell multiplier) and the **Skiff** boat
+  ($500) that unlocks open-water fishing.
+- **5-min days, 5-min nights** with end-of-day modal and skip-night vs
+  fish-night choice.
+- Pirates only spawn at sea (day 3+), double at night.
+- Hull HP and cannons at sea; sinking respawns you with half today's earnings
+  lost.
+- Idle catch-up (30-min cap) — only earns money if you own a boat (your crew).
+- localStorage save every 5s, persists which scene you were in.
 
 ## Roadmap (not yet built, ordered)
 
-1. **Harbor & shop:** dock to spend money on hull upgrades, faster engines,
-   stronger cannons, and additional fishing boats.
-2. **Fleet & auto-fish:** commercial boats run idle fishing; player commands
-   from a captain's view.
+1. **Multiple boat tiers:** trawler, longliner, factory ship — each unlocks
+   bigger fish and more idle income.
+2. **Fleet & auto-fish:** commercial boats run idle fishing while you do
+   something else; player commands from a captain's view.
 3. **Combat squad ships:** dedicated escort ships, auto vs manual prompt on
    enemy approach, dodge-on-warning manual mode.
 4. **Multiple zones / open ocean:** safe-coastal → open ocean; bigger payouts,
    constant raids.
-5. **Rival fishermen** simulated on the world map with visible empires.
-6. **Pirate hideout raids** (clear a region's base to reduce attacks).
-7. **Captains & crew** with traits and leveling.
-8. **Tech tree:** sonar, refrigeration, faster hulls, harpoon cannons, deck guns.
-9. **Weather & seasons:** storms, fog, fish migrations.
-10. **Random events:** kraken, market crash, chef-pays-5x, etc.
-11. **Market dynamics:** flood-the-market price crashes, rare fish premiums.
-12. **Side quests + rebirth:** quest list, prestige currency, permanent
+5. **Harbor defenses & raids:** harbor HP, shore guns, pirates can attack the
+   dock if you sail too far away.
+6. **Rival fishermen** simulated on the world map with visible empires.
+7. **Pirate hideout raids** (clear a region's base to reduce attacks).
+8. **Captains & crew** with traits and leveling.
+9. **Tech tree:** sonar, refrigeration, faster hulls, harpoon cannons, deck guns.
+10. **Weather & seasons:** storms, fog, fish migrations.
+11. **Random events:** kraken, market crash, chef-pays-5x, etc.
+12. **Market dynamics:** flood-the-market price crashes, rare fish premiums.
+13. **Side quests + rebirth:** quest list, prestige currency, permanent
     multipliers (e.g. +0.01% sell value per point).
-13. **Real art:** swap procedural sprites for Kenney top-down boat assets.
+14. **Real art:** swap procedural sprites for Kenney top-down boat assets.
 
 ## Things explicitly *not* in scope
 
