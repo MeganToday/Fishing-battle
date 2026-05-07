@@ -493,7 +493,7 @@ class HarborScene extends Phaser.Scene {
     this.bg = this.add.graphics().setDepth(-2);
     this.drawWorld();
 
-    const start = G.lastHarborPos ?? { x: 1000, y: 500 };
+    const start = G.lastHarborPos ?? { x: 1000, y: 460 };
     this.player = this.add.sprite(start.x, start.y, "person").setDepth(5);
 
     this.shopRect = { x: 900, y: 220, w: 200, h: 200 };
