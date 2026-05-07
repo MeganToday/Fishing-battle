@@ -47,19 +47,7 @@ Pushing to `main` updates https://megantoday.github.io/Fishing-battle/ within
 - **Rivals:** AI-only, visibly grow on the map, can be raided once you're
   strong enough.
 
-## What's in v3 (current build)
-
-- All of v2, plus **harbor defences**:
-  - Harbor has its own HP bar (top-left), starting at 250.
-  - From day 3 onward, pirates sail east toward the dock and damage the harbor on contact (×2 at night, like at sea).
-  - A **dock shotgun turret** sits at the end of the pier — aim with the mouse (yellow crosshair), hold **SPACE** to fire a 5-pellet spread (8 dmg per pellet, 17° cone, 700 ms cooldown). Manual aim — no auto-targeting.
-  - If harbor HP hits 0: lose half your gold and the harbor instantly rebuilds at full HP (the cost of being unprepared, not a game over).
-  - New shop item: **Reinforce Harbor** ($200) — +100 max HP and refill, up to a 600 cap.
-- HUD reorganized: money is the headline in the top-left, with day/phase/timer below it and the harbor HP bar under that. Rod / today's catch / hull HP moved to the top-right.
-- Shop building moved into the top-right corner of the land area; player now spawns directly in front of its door so the **E** prompt is visible immediately.
-- Day-3 alert flashes the controls when raids start.
-
-## What's in v2
+## What's in v2 (current build)
 
 - **Start on land** at the harbor with a Hand Line rod; no boat yet.
 - **Two scenes** that share state:

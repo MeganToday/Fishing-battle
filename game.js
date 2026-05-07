@@ -1,7 +1,7 @@
 // Fishing Battle — game.js
-// v3: harbor defences. Pirates raid the dock from day 3 onward; SPACE fires a
-// cannon at the nearest pirate. Harbor has its own HP — let it hit zero and
-// you lose half your gold while the harbor rebuilds. Reinforce in the shop.
+// v2: start on land at the harbor with a fishing rod. Walk to the dock to fish.
+// Walk to the shop to buy rod upgrades or a boat. Set sail to fish open water
+// and fight pirates. Dock back to spend money.
 
 // === Tunables =============================================================
 const GAME_W = 1280;
@@ -41,14 +41,7 @@ const SHOP_ITEMS = [
   { id: "boat", name: "Skiff (Small Boat)", cost: 500,
     desc: "Sail open water for bigger catches and pirate fights. Walk to it on the dock and press E to set sail.",
     available: () => !G.hasBoat, apply: () => { G.hasBoat = true; } },
-  { id: "harborWall", name: "Reinforce Harbor", cost: 200,
-    desc: "+100 max harbor HP and restored to full. Pirates start raiding the dock on Day 3.",
-    available: () => G.harborMaxHp < 600,
-    apply: () => { G.harborMaxHp += 100; G.harborHp = G.harborMaxHp; } },
 ];
-
-// Target the pirates head for when they raid the harbor.
-const HARBOR_TARGET = { x: 540, y: 370 };
 
 // === Save state ===========================================================
 let G = null;
@@ -66,21 +59,12 @@ function newSave() {
     rodTier: 1,
     hasBoat: false,
     shipHp: 100,
-    harborHp: 250,
-    harborMaxHp: 250,
   };
 }
 
 function loadSave() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
-    // Migrations from earlier v2 saves
-    if (s.harborHp == null) { s.harborHp = 250; s.harborMaxHp = 250; }
-    if (s.lastHarborPos && s.lastHarborPos.y > 400) delete s.lastHarborPos;
-    return s;
-  } catch { return null; }
+  try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch { return null; }
 }
 function writeSave(s) {
   s.lastSaveTs = Date.now();
@@ -98,6 +82,7 @@ function applyIdleCatchup() {
   if (!G.lastSaveTs) return;
   const elapsed = Math.min(IDLE_CAP_SECONDS, (Date.now() - G.lastSaveTs) / 1000);
   if (elapsed < 5) return;
+  // Only earn passive income with a boat (representing crew working in your absence).
   if (G.hasBoat) {
     const passiveMoney = Math.floor(elapsed / 25) * 8;
     if (passiveMoney > 0) {
@@ -109,10 +94,11 @@ function applyIdleCatchup() {
   G.phaseTimeLeft = Math.max(0, G.phaseTimeLeft - elapsed);
 }
 
-// === Texture generation ===================================================
+// === Texture generation (called once at boot) =============================
 function makeAllTextures(scene) {
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
 
+  // Person on land — 16x28
   if (!scene.textures.exists("person")) {
     g.fillStyle(0x3a5a7a, 1); g.fillRoundedRect(2, 10, 12, 14, 3);
     g.fillStyle(0xffd5b4, 1); g.fillCircle(8, 6, 5);
@@ -124,6 +110,7 @@ function makeAllTextures(scene) {
     g.clear();
   }
 
+  // Shop building — 200x200
   if (!scene.textures.exists("shop")) {
     g.fillStyle(0x6a2a1a, 1); g.fillTriangle(0, 80, 100, 10, 200, 80);
     g.fillStyle(0x8a3a26, 1); g.fillTriangle(10, 78, 100, 18, 190, 78);
@@ -139,6 +126,7 @@ function makeAllTextures(scene) {
     g.clear();
   }
 
+  // Fisher boat — 80x48, bow points right
   if (!scene.textures.exists("fisher_boat")) {
     g.fillStyle(0x6b3f1f, 1);
     g.beginPath();
@@ -158,6 +146,7 @@ function makeAllTextures(scene) {
     g.clear();
   }
 
+  // Pirate sloop — 80x48
   if (!scene.textures.exists("pirate_boat")) {
     g.fillStyle(0x2b1810, 1);
     g.beginPath();
@@ -177,16 +166,6 @@ function makeAllTextures(scene) {
     g.moveTo(8, 12); g.lineTo(8, 36); g.lineTo(48, 36);
     g.lineTo(74, 24); g.lineTo(48, 12); g.closePath(); g.strokePath();
     g.generateTexture("pirate_boat", 80, 48);
-    g.clear();
-  }
-
-  // Dock cannon turret (24x24)
-  if (!scene.textures.exists("turret")) {
-    g.fillStyle(0x2a2a2a, 1); g.fillCircle(12, 12, 9);
-    g.fillStyle(0x444444, 1); g.fillCircle(12, 12, 6);
-    g.fillStyle(0x111111, 1); g.fillRect(0, 10, 16, 4);
-    g.lineStyle(1, 0x000000, 1); g.strokeCircle(12, 12, 9);
-    g.generateTexture("turret", 24, 24);
   }
 
   g.destroy();
@@ -206,7 +185,7 @@ class BootScene extends Phaser.Scene {
   }
 }
 
-// === UIScene ==============================================================
+// === UIScene: HUD, day cycle, end-of-day modal, shop modal ================
 class UIScene extends Phaser.Scene {
   constructor() { super("UI"); }
 
@@ -224,30 +203,15 @@ class UIScene extends Phaser.Scene {
   buildHud() {
     const base = { fontFamily: "monospace", fontSize: "18px", color: "#e8f0fa" };
     this.hud = {};
-
-    // Top-left: money (big), then day/phase/timer
-    this.hud.money = this.add.text(16, 12, "", {
-      fontFamily: "monospace", fontSize: "26px", color: "#ffe27a", fontStyle: "bold",
-    }).setScrollFactor(0).setDepth(100);
-    this.hud.day = this.add.text(16, 50, "", base).setScrollFactor(0).setDepth(100);
-    this.hud.phase = this.add.text(16, 74, "", base).setScrollFactor(0).setDepth(100);
-    this.hud.timer = this.add.text(16, 98, "", base).setScrollFactor(0).setDepth(100);
-
-    // Harbor HP bar — only visible at the harbor
-    this.hud.harborLabel = this.add.text(16, 134, "", { ...base, fontSize: "13px", color: "#ffb0b0" })
-      .setScrollFactor(0).setDepth(100);
-    this.hud.harborBarBg = this.add.rectangle(16, 154, 220, 14, 0x33181a)
-      .setStrokeStyle(1, 0x553030).setOrigin(0, 0).setScrollFactor(0).setDepth(100);
-    this.hud.harborBar = this.add.rectangle(17, 155, 218, 12, 0xff5a5a)
-      .setOrigin(0, 0).setScrollFactor(0).setDepth(101);
-
-    // Top-right: rod, fish today, hull (sea only)
-    this.hud.rod = this.add.text(GAME_W - 16, 12, "", base).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
-    this.hud.fishToday = this.add.text(GAME_W - 16, 36, "", base).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
-    this.hud.hp = this.add.text(GAME_W - 16, 60, "", { ...base, color: "#ff8a8a" })
+    this.hud.day = this.add.text(16, 12, "", base).setScrollFactor(0).setDepth(100);
+    this.hud.phase = this.add.text(16, 36, "", base).setScrollFactor(0).setDepth(100);
+    this.hud.timer = this.add.text(16, 60, "", base).setScrollFactor(0).setDepth(100);
+    this.hud.money = this.add.text(GAME_W - 16, 12, "", { ...base, fontSize: "22px", color: "#ffe27a" })
       .setOrigin(1, 0).setScrollFactor(0).setDepth(100);
-
-    // Dev skip
+    this.hud.rod = this.add.text(GAME_W - 16, 42, "", base).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
+    this.hud.fishToday = this.add.text(GAME_W - 16, 66, "", base).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
+    this.hud.hp = this.add.text(GAME_W - 16, 90, "", { ...base, color: "#ff8a8a" })
+      .setOrigin(1, 0).setScrollFactor(0).setDepth(100);
     this.hud.skipBtn = this.add.text(GAME_W / 2, GAME_H - 24, "[ dev: skip phase ]", { ...base, color: "#88a" })
       .setOrigin(0.5, 1).setScrollFactor(0).setDepth(100).setInteractive({ useHandCursor: true });
     this.hud.skipBtn.on("pointerdown", (p, lx, ly, e) => {
@@ -258,25 +222,14 @@ class UIScene extends Phaser.Scene {
   }
 
   refreshHud() {
-    this.hud.money.setText(`$${G.money.toLocaleString()}`);
     this.hud.day.setText(`Day ${G.day}`);
     this.hud.phase.setText(G.phase === "day" ? "Daytime" : "Nightfall");
     const m = Math.floor(G.phaseTimeLeft / 60);
     const s = Math.floor(G.phaseTimeLeft % 60).toString().padStart(2, "0");
     this.hud.timer.setText(`${m}:${s} remaining`);
+    this.hud.money.setText(`$${G.money.toLocaleString()}`);
     this.hud.rod.setText(`Rod: ${ROD_TIERS[G.rodTier].name}`);
     this.hud.fishToday.setText(`Today: ${G.todayLog.fishCaught.length} fish`);
-
-    const showHarbor = G.mode === "harbor";
-    this.hud.harborLabel.setVisible(showHarbor);
-    this.hud.harborBarBg.setVisible(showHarbor);
-    this.hud.harborBar.setVisible(showHarbor);
-    if (showHarbor) {
-      const ratio = Math.max(0, G.harborHp) / G.harborMaxHp;
-      this.hud.harborBar.width = Math.max(0, 218 * ratio);
-      this.hud.harborLabel.setText(`Harbor: ${Math.max(0, G.harborHp | 0)} / ${G.harborMaxHp}`);
-    }
-
     if (G.mode === "sea") {
       this.hud.hp.setText(`Hull: ${Math.max(0, G.shipHp | 0)}/100`).setVisible(true);
     } else {
@@ -289,16 +242,19 @@ class UIScene extends Phaser.Scene {
     this.titleToast = this.add.text(GAME_W / 2, 96, text, {
       fontFamily: "monospace", fontSize: "16px",
       color: "#0a1628", backgroundColor: "#ffe27a", padding: { x: 14, y: 8 },
-      align: "center", wordWrap: { width: 700 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(150);
     this.time.delayedCall(ms, () => { if (this.titleToast) { this.titleToast.destroy(); this.titleToast = null; } });
   }
 
   pauseWorld() {
-    ["Harbor", "Sea"].forEach(k => { if (this.scene.isActive(k)) this.scene.pause(k); });
+    ["Harbor", "Sea"].forEach(k => {
+      if (this.scene.isActive(k)) this.scene.pause(k);
+    });
   }
   resumeWorld() {
-    ["Harbor", "Sea"].forEach(k => { if (this.scene.isPaused(k)) this.scene.resume(k); });
+    ["Harbor", "Sea"].forEach(k => {
+      if (this.scene.isPaused(k)) this.scene.resume(k);
+    });
   }
 
   update(time, dtMs) {
@@ -338,18 +294,17 @@ class UIScene extends Phaser.Scene {
       `Battles:        ${log.piratesSunk} pirate sunk • ${log.shipsLost} ship lost`,
       ``,
       `Cash on hand:   $${G.money.toLocaleString()}`,
-      `Harbor:         ${G.harborHp} / ${G.harborMaxHp}`,
     ].join("\n");
 
     const refs = [];
     refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, GAME_W, GAME_H, 0x000000, 0.6).setDepth(200));
-    refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, 580, 480, 0x101820, 1).setStrokeStyle(2, 0xffe27a).setDepth(201));
-    refs.push(this.add.text(GAME_W/2, GAME_H/2 - 210, text, {
+    refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, 580, 460, 0x101820, 1).setStrokeStyle(2, 0xffe27a).setDepth(201));
+    refs.push(this.add.text(GAME_W/2, GAME_H/2 - 200, text, {
       fontFamily: "monospace", fontSize: "16px", color: "#e8f0fa", align: "left",
     }).setOrigin(0.5, 0).setDepth(202));
 
     const mkBtn = (x, label, color) =>
-      this.add.text(x, GAME_H/2 + 190, label, {
+      this.add.text(x, GAME_H/2 + 180, label, {
         fontFamily: "monospace", fontSize: "16px",
         color: "#0a1628", backgroundColor: color, padding: { x: 14, y: 10 },
       }).setOrigin(0.5).setDepth(202).setInteractive({ useHandCursor: true });
@@ -380,13 +335,7 @@ class UIScene extends Phaser.Scene {
     const sea = this.scene.get("Sea");
     if (sea?.pirates) sea.pirates.clear(true, true);
     if (sea?.player) sea.player.hp = Math.min(sea.player.maxHp, sea.player.hp + 40);
-    const harbor = this.scene.get("Harbor");
-    if (harbor?.pirates) harbor.pirates.clear(true, true);
-    if (G.day === 3) {
-      this.flashTitle("Day 3 — pirate raids begin. Aim with the mouse, hold SPACE to fire the dock shotgun.", 7000);
-    } else {
-      this.flashTitle(`Day ${G.day} begins.`, 2500);
-    }
+    this.flashTitle(`Day ${G.day} begins.`, 2500);
   }
 
   startNight() {
@@ -405,11 +354,11 @@ class UIScene extends Phaser.Scene {
 
     const refs = [];
     refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, GAME_W, GAME_H, 0x000000, 0.6).setDepth(200));
-    refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, 760, 580, 0x101820, 1).setStrokeStyle(2, 0xffe27a).setDepth(201));
-    refs.push(this.add.text(GAME_W/2, GAME_H/2 - 260, "HARBOR SHOP", {
+    refs.push(this.add.rectangle(GAME_W/2, GAME_H/2, 720, 540, 0x101820, 1).setStrokeStyle(2, 0xffe27a).setDepth(201));
+    refs.push(this.add.text(GAME_W/2, GAME_H/2 - 240, "HARBOR SHOP", {
       fontFamily: "monospace", fontSize: "22px", color: "#ffe27a",
     }).setOrigin(0.5, 0).setDepth(202));
-    const cashText = this.add.text(GAME_W/2, GAME_H/2 - 230, "", {
+    const cashText = this.add.text(GAME_W/2, GAME_H/2 - 210, "", {
       fontFamily: "monospace", fontSize: "14px", color: "#bbb",
     }).setOrigin(0.5, 0).setDepth(202);
     refs.push(cashText);
@@ -420,30 +369,30 @@ class UIScene extends Phaser.Scene {
       itemRefs.length = 0;
       const available = SHOP_ITEMS.filter(i => i.available());
       if (available.length === 0) {
-        itemRefs.push(this.add.text(GAME_W/2, GAME_H/2 - 120, "(no more items available — more in v4)", {
+        itemRefs.push(this.add.text(GAME_W/2, GAME_H/2 - 120, "(no more items available — more in v3)", {
           fontFamily: "monospace", fontSize: "14px", color: "#888",
         }).setOrigin(0.5, 0).setDepth(202));
         return;
       }
-      let cy = GAME_H/2 - 180;
+      let cy = GAME_H/2 - 160;
       for (const item of available) {
         const canAfford = G.money >= item.cost;
         const nameC = canAfford ? "#ffe27a" : "#888";
         const buyBg = canAfford ? "#ffe27a" : "#444";
         const buyFg = canAfford ? "#0a1628" : "#888";
 
-        itemRefs.push(this.add.text(GAME_W/2 - 340, cy, item.name, {
+        itemRefs.push(this.add.text(GAME_W/2 - 320, cy, item.name, {
           fontFamily: "monospace", fontSize: "18px", color: nameC,
         }).setOrigin(0, 0).setDepth(202));
-        itemRefs.push(this.add.text(GAME_W/2 - 340, cy + 24, item.desc, {
+        itemRefs.push(this.add.text(GAME_W/2 - 320, cy + 24, item.desc, {
           fontFamily: "monospace", fontSize: "13px", color: "#bbb",
-          wordWrap: { width: 480 },
+          wordWrap: { width: 460 },
         }).setOrigin(0, 0).setDepth(202));
-        itemRefs.push(this.add.text(GAME_W/2 + 220, cy + 6, `$${item.cost.toLocaleString()}`, {
+        itemRefs.push(this.add.text(GAME_W/2 + 200, cy + 6, `$${item.cost.toLocaleString()}`, {
           fontFamily: "monospace", fontSize: "16px", color: nameC,
         }).setOrigin(1, 0).setDepth(202));
 
-        const buyBtn = this.add.text(GAME_W/2 + 320, cy + 6, "Buy", {
+        const buyBtn = this.add.text(GAME_W/2 + 290, cy + 6, "Buy", {
           fontFamily: "monospace", fontSize: "16px",
           color: buyFg, backgroundColor: buyBg, padding: { x: 14, y: 6 },
         }).setOrigin(1, 0).setDepth(202);
@@ -466,7 +415,7 @@ class UIScene extends Phaser.Scene {
     cashText.setText(`Cash: $${G.money.toLocaleString()}`);
     renderItems();
 
-    const closeBtn = this.add.text(GAME_W/2, GAME_H/2 + 250, "Close", {
+    const closeBtn = this.add.text(GAME_W/2, GAME_H/2 + 230, "Close", {
       fontFamily: "monospace", fontSize: "16px",
       color: "#0a1628", backgroundColor: "#9be7a3", padding: { x: 18, y: 8 },
     }).setOrigin(0.5).setDepth(202).setInteractive({ useHandCursor: true });
@@ -544,47 +493,24 @@ class HarborScene extends Phaser.Scene {
     this.bg = this.add.graphics().setDepth(-2);
     this.drawWorld();
 
-    // Shop in top-right corner of land
-    this.shopRect = { x: 1060, y: 80, w: 200, h: 200 };
+    const start = G.lastHarborPos ?? { x: 1000, y: 500 };
+    this.player = this.add.sprite(start.x, start.y, "person").setDepth(5);
+
+    this.shopRect = { x: 900, y: 220, w: 200, h: 200 };
     this.shopBuilding = this.add.image(this.shopRect.x + this.shopRect.w/2, this.shopRect.y + this.shopRect.h/2, "shop").setDepth(4);
     this.add.text(this.shopRect.x + this.shopRect.w/2, this.shopRect.y + 70, "SHOP", {
       fontFamily: "monospace", fontSize: "13px", fontStyle: "bold", color: "#4a2810",
     }).setOrigin(0.5).setDepth(5);
 
-    // Player spawn — directly in front of the shop's door
-    const start = G.lastHarborPos ?? { x: 1160, y: 320 };
-    this.player = this.add.sprite(start.x, start.y, "person").setDepth(5);
-
-    // Dock cannon — visible turret at the end of the dock
-    this.turret = this.add.image(700, 370, "turret").setDepth(4);
-
-    // Boat at the dock if owned
     this.dockedBoat = null;
     if (G.hasBoat) this.spawnDockedBoat();
 
-    // Input — use explicit KeyCodes so the comma-string parser can't bite us
-    const KC = Phaser.Input.Keyboard.KeyCodes;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keyW = this.input.keyboard.addKey(KC.W);
-    this.keyA = this.input.keyboard.addKey(KC.A);
-    this.keyS = this.input.keyboard.addKey(KC.S);
-    this.keyD = this.input.keyboard.addKey(KC.D);
-    this.keySpace = this.input.keyboard.addKey(KC.SPACE);
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,E");
     this.input.on("pointerdown", (p) => this.handleClick(p));
-    this._eHandler = () => this.handleInteract();
-    this.input.keyboard.on("keydown-E", this._eHandler);
+    this.keys.E.on("down", () => this.handleInteract());
 
     this.castLine = null;
-
-    // Combat: pirates raid the harbor from day 3 onward
-    this.pirates = this.physics.add.group();
-    this.bullets = this.physics.add.group();
-    this.physics.add.overlap(this.bullets, this.pirates, this.onBulletHit, null, this);
-    this.pirateSpawnAccum = 0;
-    this.lastFireAt = 0;
-
-    // Crosshair shows where the dock shotgun is aimed
-    this.crosshair = this.add.graphics().setDepth(25);
 
     this.prompt = this.add.text(0, 0, "", {
       fontFamily: "monospace", fontSize: "14px",
@@ -598,12 +524,11 @@ class HarborScene extends Phaser.Scene {
     this.events.on("shutdown", () => {
       this.game.events.off("phaseChanged", this._phaseChanged);
       this.game.events.off("inventoryChanged", this._inventoryChanged);
-      this.input.keyboard.off("keydown-E", this._eHandler);
     });
 
     if (G.day === 1 && G.todayLog.fishCaught.length === 0 && G.money < 30) {
       this.scene.get("UI").flashTitle(
-        "Welcome, captain. The shop is right here — press E. Walk to the dock with WASD to fish.", 6500
+        "Welcome, captain. Walk to the dock (WASD) and click the water to cast.", 6000
       );
     }
   }
@@ -612,6 +537,7 @@ class HarborScene extends Phaser.Scene {
     this.bg.clear();
     const isNight = G.phase === "night";
 
+    // Sea (left)
     const seaTop = isNight ? 0x041422 : 0x0d6a8e;
     const seaBot = isNight ? 0x021018 : 0x074c63;
     this.bg.fillGradientStyle(seaTop, seaTop, seaBot, seaBot, 1);
@@ -626,6 +552,7 @@ class HarborScene extends Phaser.Scene {
       }
     }
 
+    // Land (right)
     const landTop = isNight ? 0x1a2a18 : 0x4a7a3a;
     const landBot = isNight ? 0x10180e : 0x386028;
     this.bg.fillGradientStyle(landTop, landTop, landBot, landBot, 1);
@@ -678,7 +605,7 @@ class HarborScene extends Phaser.Scene {
   handleClick(pointer) {
     const ui = this.scene.get("UI");
     if (ui.modalOpen) return;
-    if (pointer.y > GAME_H - 50) return;
+    if (pointer.y > GAME_H - 50) return; // bottom HUD strip (dev skip button)
     if (this.castLine) {
       reelCast(this, this.castLine, this.player.x, this.player.y, false);
       this.castLine = null;
@@ -697,8 +624,8 @@ class HarborScene extends Phaser.Scene {
 
   isNearShop() {
     const r = this.shopRect;
-    return this.player.x > r.x - 40 && this.player.x < r.x + r.w + 40 &&
-           this.player.y > r.y && this.player.y < r.y + r.h + 80;
+    return this.player.x > r.x - 30 && this.player.x < r.x + r.w + 30 &&
+           this.player.y > r.y + r.h - 60 && this.player.y < r.y + r.h + 60;
   }
   isNearBoat() {
     if (!this.dockedBoat) return false;
@@ -719,113 +646,16 @@ class HarborScene extends Phaser.Scene {
     this.scene.start("Sea");
   }
 
-  // --- Harbor combat ---
-  harborPirateRate() {
-    let rate = 0;
-    if (G.day >= 3) rate = 0.5;
-    if (G.day >= 5) rate = 0.8;
-    if (G.day >= 8) rate = 1.2;
-    if (G.phase === "night") rate *= 2;
-    return rate;
-  }
-
-  spawnHarborPirate() {
-    const x = -40;
-    const y = 80 + Math.random() * (GAME_H - 160);
-    const p = this.physics.add.sprite(x, y, "pirate_boat");
-    p.hp = 30;
-    this.pirates.add(p);
-  }
-
-  updateHarborPirates(dt) {
-    this.pirateSpawnAccum += this.harborPirateRate() * dt / 60;
-    while (this.pirateSpawnAccum >= 1) { this.spawnHarborPirate(); this.pirateSpawnAccum -= 1; }
-    this.pirates.children.iterate((p) => {
-      if (!p) return;
-      const dist = Math.hypot(p.x - HARBOR_TARGET.x, p.y - HARBOR_TARGET.y);
-      if (dist < 40) {
-        const dmg = 25;
-        G.harborHp -= dmg;
-        flashFloat(this, HARBOR_TARGET.x, HARBOR_TARGET.y - 20, `−${dmg} harbor!`, "#ff6a6a");
-        this.cameras.main.shake(180, 0.008);
-        p.destroy();
-        if (G.harborHp <= 0) this.harborDestroyed();
-        return;
-      }
-      const ang = Phaser.Math.Angle.Between(p.x, p.y, HARBOR_TARGET.x, HARBOR_TARGET.y);
-      this.physics.velocityFromRotation(ang, 70, p.body.velocity);
-      p.rotation = ang;
-    });
-  }
-
-  fireShotgun() {
-    if (this.time.now < this.lastFireAt + 700) return;
-    this.lastFireAt = this.time.now;
-    const pointer = this.input.activePointer;
-    const aimX = pointer.worldX, aimY = pointer.worldY;
-    const ang = Phaser.Math.Angle.Between(this.turret.x, this.turret.y, aimX, aimY);
-    this.turret.rotation = ang;
-    const PELLETS = 5;
-    const SPREAD = 0.30; // total cone in radians (~17°)
-    for (let i = 0; i < PELLETS; i++) {
-      const t = (i / (PELLETS - 1)) - 0.5;
-      const a = ang + t * SPREAD;
-      const b = this.add.circle(this.turret.x, this.turret.y, 3, 0xffd84a).setDepth(2);
-      this.physics.add.existing(b);
-      b.body.setVelocity(Math.cos(a) * 480, Math.sin(a) * 480);
-      b.dmg = 8;
-      this.bullets.add(b);
-      this.time.delayedCall(900, () => { if (b.active) b.destroy(); });
-    }
-  }
-
-  drawCrosshair() {
-    this.crosshair.clear();
-    const p = this.input.activePointer;
-    const x = p.worldX, y = p.worldY;
-    if (!Number.isFinite(x)) return;
-    this.crosshair.lineStyle(1.5, 0xffd84a, 0.85);
-    this.crosshair.strokeCircle(x, y, 10);
-    this.crosshair.lineBetween(x - 14, y, x - 4, y);
-    this.crosshair.lineBetween(x + 4, y, x + 14, y);
-    this.crosshair.lineBetween(x, y - 14, x, y - 4);
-    this.crosshair.lineBetween(x, y + 4, x, y + 14);
-  }
-
-  onBulletHit(bullet, pirate) {
-    if (!bullet.active || !pirate.active) return;
-    pirate.hp -= bullet.dmg;
-    bullet.destroy();
-    flashFloat(this, pirate.x, pirate.y - 24, `-${bullet.dmg}`, "#ffd84a");
-    if (pirate.hp <= 0) {
-      flashFloat(this, pirate.x, pirate.y, "sunk!", "#ffd84a");
-      G.todayLog.piratesSunk += 1;
-      G.money += 25;
-      pirate.destroy();
-    }
-  }
-
-  harborDestroyed() {
-    const lost = Math.floor(G.money / 2);
-    G.money = G.money - lost;
-    G.harborHp = G.harborMaxHp;
-    this.pirates.clear(true, true);
-    this.cameras.main.shake(800, 0.02);
-    this.scene.get("UI").flashTitle(
-      `HARBOR OVERRUN! Lost $${lost.toLocaleString()}. Rebuilt to ${G.harborMaxHp} HP.`, 6000
-    );
-  }
-
   update(time, dtMs) {
     const ui = this.scene.get("UI");
-    if (ui && ui.modalOpen) return;
+    if (ui.modalOpen) return;
     const dt = dtMs / 1000;
     const speed = 180;
     let vx = 0, vy = 0;
-    const left  = this.cursors.left.isDown  || this.keyA.isDown;
-    const right = this.cursors.right.isDown || this.keyD.isDown;
-    const up    = this.cursors.up.isDown    || this.keyW.isDown;
-    const down  = this.cursors.down.isDown  || this.keyS.isDown;
+    const left  = this.cursors.left.isDown  || this.keys.A.isDown;
+    const right = this.cursors.right.isDown || this.keys.D.isDown;
+    const up    = this.cursors.up.isDown    || this.keys.W.isDown;
+    const down  = this.cursors.down.isDown  || this.keys.S.isDown;
     if (left)  vx -= speed;
     if (right) vx += speed;
     if (up)    vy -= speed;
@@ -837,12 +667,9 @@ class HarborScene extends Phaser.Scene {
       if (this.isWalkable(this.player.x, ny)) this.player.y = ny;
     }
 
-    if (this.keySpace.isDown) this.fireShotgun();
     if (this.castLine) {
       this.castLine = tickCast(this, this.castLine, this.player.x, this.player.y);
     }
-    this.updateHarborPirates(dt);
-    this.drawCrosshair();
 
     if (this.isNearShop()) {
       this.prompt.setPosition(this.shopRect.x + this.shopRect.w/2, this.shopRect.y + this.shopRect.h + 8);
@@ -870,16 +697,10 @@ class SeaScene extends Phaser.Scene {
     this.player.maxHp = 100;
     this.player.invulnUntil = 0;
 
-    const KC = Phaser.Input.Keyboard.KeyCodes;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keyW = this.input.keyboard.addKey(KC.W);
-    this.keyA = this.input.keyboard.addKey(KC.A);
-    this.keyS = this.input.keyboard.addKey(KC.S);
-    this.keyD = this.input.keyboard.addKey(KC.D);
-    this.keySpace = this.input.keyboard.addKey(KC.SPACE);
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,SPACE,E");
     this.input.on("pointerdown", (p) => this.handleClick(p));
-    this._eHandler = () => this.tryDock();
-    this.input.keyboard.on("keydown-E", this._eHandler);
+    this.keys.E.on("down", () => this.tryDock());
 
     this.castLine = null;
 
@@ -904,13 +725,10 @@ class SeaScene extends Phaser.Scene {
     this.drawSea(); this.drawStars();
     this._phaseChanged = () => { this.drawSea(); this.drawStars(); };
     this.game.events.on("phaseChanged", this._phaseChanged);
-    this.events.on("shutdown", () => {
-      this.game.events.off("phaseChanged", this._phaseChanged);
-      this.input.keyboard.off("keydown-E", this._eHandler);
-    });
+    this.events.on("shutdown", () => this.game.events.off("phaseChanged", this._phaseChanged));
 
     this.scene.get("UI").flashTitle(
-      "Open water. WASD to sail • SPACE fires cannon • E inside the harbor zone to dock.", 5000
+      "Open water. WASD/arrows to sail • SPACE to fire cannon • E inside the harbor zone to dock.", 5000
     );
   }
 
@@ -1055,14 +873,14 @@ class SeaScene extends Phaser.Scene {
 
   update(time, dtMs) {
     const ui = this.scene.get("UI");
-    if (ui && ui.modalOpen) return;
+    if (ui.modalOpen) return;
     const dt = dtMs / 1000;
     let vx = 0, vy = 0;
     const speed = 220;
-    const left  = this.cursors.left.isDown  || this.keyA.isDown;
-    const right = this.cursors.right.isDown || this.keyD.isDown;
-    const up    = this.cursors.up.isDown    || this.keyW.isDown;
-    const down  = this.cursors.down.isDown  || this.keyS.isDown;
+    const left  = this.cursors.left.isDown  || this.keys.A.isDown;
+    const right = this.cursors.right.isDown || this.keys.D.isDown;
+    const up    = this.cursors.up.isDown    || this.keys.W.isDown;
+    const down  = this.cursors.down.isDown  || this.keys.S.isDown;
     if (left)  vx -= speed;
     if (right) vx += speed;
     if (up)    vy -= speed;
@@ -1073,7 +891,7 @@ class SeaScene extends Phaser.Scene {
     } else {
       this.player.setVelocity(0, 0);
     }
-    if (this.keySpace.isDown) this.fireCannon();
+    if (this.keys.SPACE.isDown) this.fireCannon();
     if (this.castLine) {
       this.castLine = tickCast(this, this.castLine, this.player.x, this.player.y);
     }
