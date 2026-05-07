@@ -383,7 +383,7 @@ class UIScene extends Phaser.Scene {
     const harbor = this.scene.get("Harbor");
     if (harbor?.pirates) harbor.pirates.clear(true, true);
     if (G.day === 3) {
-      this.flashTitle("Day 3 — pirate raids begin. SPACE fires the dock cannon.", 6000);
+      this.flashTitle("Day 3 — pirate raids begin. Aim with the mouse, hold SPACE to fire the dock shotgun.", 7000);
     } else {
       this.flashTitle(`Day ${G.day} begins.`, 2500);
     }
@@ -562,9 +562,14 @@ class HarborScene extends Phaser.Scene {
     this.dockedBoat = null;
     if (G.hasBoat) this.spawnDockedBoat();
 
-    // Input
+    // Input — use explicit KeyCodes so the comma-string parser can't bite us
+    const KC = Phaser.Input.Keyboard.KeyCodes;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,SPACE");
+    this.keyW = this.input.keyboard.addKey(KC.W);
+    this.keyA = this.input.keyboard.addKey(KC.A);
+    this.keyS = this.input.keyboard.addKey(KC.S);
+    this.keyD = this.input.keyboard.addKey(KC.D);
+    this.keySpace = this.input.keyboard.addKey(KC.SPACE);
     this.input.on("pointerdown", (p) => this.handleClick(p));
     this._eHandler = () => this.handleInteract();
     this.input.keyboard.on("keydown-E", this._eHandler);
@@ -577,6 +582,9 @@ class HarborScene extends Phaser.Scene {
     this.physics.add.overlap(this.bullets, this.pirates, this.onBulletHit, null, this);
     this.pirateSpawnAccum = 0;
     this.lastFireAt = 0;
+
+    // Crosshair shows where the dock shotgun is aimed
+    this.crosshair = this.add.graphics().setDepth(25);
 
     this.prompt = this.add.text(0, 0, "", {
       fontFamily: "monospace", fontSize: "14px",
@@ -750,29 +758,38 @@ class HarborScene extends Phaser.Scene {
     });
   }
 
-  fireDockCannon() {
-    if (this.time.now < this.lastFireAt + 600) return;
-    const target = this.findNearestPirate();
-    if (!target) return;
+  fireShotgun() {
+    if (this.time.now < this.lastFireAt + 700) return;
     this.lastFireAt = this.time.now;
-    const ang = Phaser.Math.Angle.Between(this.turret.x, this.turret.y, target.x, target.y);
+    const pointer = this.input.activePointer;
+    const aimX = pointer.worldX, aimY = pointer.worldY;
+    const ang = Phaser.Math.Angle.Between(this.turret.x, this.turret.y, aimX, aimY);
     this.turret.rotation = ang;
-    const b = this.add.circle(this.turret.x, this.turret.y, 4, 0xffd84a).setDepth(2);
-    this.physics.add.existing(b);
-    b.body.setVelocity(Math.cos(ang) * 520, Math.sin(ang) * 520);
-    b.dmg = 15;
-    this.bullets.add(b);
-    this.time.delayedCall(1600, () => { if (b.active) b.destroy(); });
+    const PELLETS = 5;
+    const SPREAD = 0.30; // total cone in radians (~17°)
+    for (let i = 0; i < PELLETS; i++) {
+      const t = (i / (PELLETS - 1)) - 0.5;
+      const a = ang + t * SPREAD;
+      const b = this.add.circle(this.turret.x, this.turret.y, 3, 0xffd84a).setDepth(2);
+      this.physics.add.existing(b);
+      b.body.setVelocity(Math.cos(a) * 480, Math.sin(a) * 480);
+      b.dmg = 8;
+      this.bullets.add(b);
+      this.time.delayedCall(900, () => { if (b.active) b.destroy(); });
+    }
   }
 
-  findNearestPirate() {
-    let best = null, bestDist = Infinity;
-    this.pirates.children.iterate((p) => {
-      if (!p) return;
-      const d = Math.hypot(p.x - this.turret.x, p.y - this.turret.y);
-      if (d < bestDist) { bestDist = d; best = p; }
-    });
-    return bestDist < 800 ? best : null;
+  drawCrosshair() {
+    this.crosshair.clear();
+    const p = this.input.activePointer;
+    const x = p.worldX, y = p.worldY;
+    if (!Number.isFinite(x)) return;
+    this.crosshair.lineStyle(1.5, 0xffd84a, 0.85);
+    this.crosshair.strokeCircle(x, y, 10);
+    this.crosshair.lineBetween(x - 14, y, x - 4, y);
+    this.crosshair.lineBetween(x + 4, y, x + 14, y);
+    this.crosshair.lineBetween(x, y - 14, x, y - 4);
+    this.crosshair.lineBetween(x, y + 4, x, y + 14);
   }
 
   onBulletHit(bullet, pirate) {
@@ -801,14 +818,14 @@ class HarborScene extends Phaser.Scene {
 
   update(time, dtMs) {
     const ui = this.scene.get("UI");
-    if (ui.modalOpen) return;
+    if (ui && ui.modalOpen) return;
     const dt = dtMs / 1000;
     const speed = 180;
     let vx = 0, vy = 0;
-    const left  = this.cursors.left.isDown  || this.keys.A.isDown;
-    const right = this.cursors.right.isDown || this.keys.D.isDown;
-    const up    = this.cursors.up.isDown    || this.keys.W.isDown;
-    const down  = this.cursors.down.isDown  || this.keys.S.isDown;
+    const left  = this.cursors.left.isDown  || this.keyA.isDown;
+    const right = this.cursors.right.isDown || this.keyD.isDown;
+    const up    = this.cursors.up.isDown    || this.keyW.isDown;
+    const down  = this.cursors.down.isDown  || this.keyS.isDown;
     if (left)  vx -= speed;
     if (right) vx += speed;
     if (up)    vy -= speed;
@@ -820,11 +837,12 @@ class HarborScene extends Phaser.Scene {
       if (this.isWalkable(this.player.x, ny)) this.player.y = ny;
     }
 
-    if (this.keys.SPACE.isDown) this.fireDockCannon();
+    if (this.keySpace.isDown) this.fireShotgun();
     if (this.castLine) {
       this.castLine = tickCast(this, this.castLine, this.player.x, this.player.y);
     }
     this.updateHarborPirates(dt);
+    this.drawCrosshair();
 
     if (this.isNearShop()) {
       this.prompt.setPosition(this.shopRect.x + this.shopRect.w/2, this.shopRect.y + this.shopRect.h + 8);
@@ -852,8 +870,13 @@ class SeaScene extends Phaser.Scene {
     this.player.maxHp = 100;
     this.player.invulnUntil = 0;
 
+    const KC = Phaser.Input.Keyboard.KeyCodes;
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,SPACE");
+    this.keyW = this.input.keyboard.addKey(KC.W);
+    this.keyA = this.input.keyboard.addKey(KC.A);
+    this.keyS = this.input.keyboard.addKey(KC.S);
+    this.keyD = this.input.keyboard.addKey(KC.D);
+    this.keySpace = this.input.keyboard.addKey(KC.SPACE);
     this.input.on("pointerdown", (p) => this.handleClick(p));
     this._eHandler = () => this.tryDock();
     this.input.keyboard.on("keydown-E", this._eHandler);
@@ -1032,14 +1055,14 @@ class SeaScene extends Phaser.Scene {
 
   update(time, dtMs) {
     const ui = this.scene.get("UI");
-    if (ui.modalOpen) return;
+    if (ui && ui.modalOpen) return;
     const dt = dtMs / 1000;
     let vx = 0, vy = 0;
     const speed = 220;
-    const left  = this.cursors.left.isDown  || this.keys.A.isDown;
-    const right = this.cursors.right.isDown || this.keys.D.isDown;
-    const up    = this.cursors.up.isDown    || this.keys.W.isDown;
-    const down  = this.cursors.down.isDown  || this.keys.S.isDown;
+    const left  = this.cursors.left.isDown  || this.keyA.isDown;
+    const right = this.cursors.right.isDown || this.keyD.isDown;
+    const up    = this.cursors.up.isDown    || this.keyW.isDown;
+    const down  = this.cursors.down.isDown  || this.keyS.isDown;
     if (left)  vx -= speed;
     if (right) vx += speed;
     if (up)    vy -= speed;
@@ -1050,7 +1073,7 @@ class SeaScene extends Phaser.Scene {
     } else {
       this.player.setVelocity(0, 0);
     }
-    if (this.keys.SPACE.isDown) this.fireCannon();
+    if (this.keySpace.isDown) this.fireCannon();
     if (this.castLine) {
       this.castLine = tickCast(this, this.castLine, this.player.x, this.player.y);
     }
