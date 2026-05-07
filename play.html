@@ -7,16 +7,39 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Fishing Battle</title>
-    <link rel="stylesheet" href="style.css?v=7" />
+    <link rel="stylesheet" href="style.css?v=8" />
+    <style>
+      #error-overlay {
+        position: fixed; left: 12px; right: 12px; top: 12px;
+        background: #2a0a0a; color: #ffb0b0; border: 2px solid #ff5a5a;
+        padding: 12px 14px; font-family: monospace; font-size: 13px;
+        white-space: pre-wrap; z-index: 9999; display: none; max-height: 40vh; overflow: auto;
+      }
+    </style>
   </head>
   <body>
     <div class="title">FISHING BATTLE</div>
+    <div id="error-overlay"></div>
     <div id="game"></div>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+
     <script>
-      // Fresh-start guard: if the player loaded this page once, drop any save that
-      // came from a broken earlier build. Skipped on subsequent visits so progress
-      // persists from this point on.
+      // On-screen error reporter — shows JS errors without needing DevTools.
+      (function () {
+        const el = document.getElementById("error-overlay");
+        const show = (msg) => {
+          if (!el) return;
+          el.style.display = "block";
+          el.textContent = (el.textContent ? el.textContent + "\n\n" : "") + msg;
+        };
+        window.addEventListener("error", (e) => {
+          show(`ERROR: ${e.message}\n  at ${e.filename}:${e.lineno}:${e.colno}`);
+        });
+        window.addEventListener("unhandledrejection", (e) => {
+          show(`UNHANDLED PROMISE: ${e.reason && e.reason.message ? e.reason.message : e.reason}`);
+        });
+      })();
+
+      // One-time fresh start: drop any save from a broken earlier build.
       try {
         if (!localStorage.getItem("fishingBattle.freshStart.v7")) {
           localStorage.removeItem("fishingBattle.save.v1");
@@ -25,6 +48,7 @@
         }
       } catch (e) {}
     </script>
-    <script src="game-v7.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <script src="game-v7.js?v=8"></script>
   </body>
 </html>

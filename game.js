@@ -182,6 +182,9 @@ class BootScene extends Phaser.Scene {
     this.scene.launch("UI");
     const goSea = G.mode === "sea" && G.hasBoat;
     this.scene.start(goSea ? "Sea" : "Harbor");
+    // HUD and modals live in UIScene. Force it to the top of the render
+    // stack so the shop/end-of-day overlays aren't hidden behind sea tiles.
+    this.scene.bringToTop("UI");
   }
 }
 
