@@ -7,12 +7,24 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Fishing Battle</title>
-    <link rel="stylesheet" href="style.css?v=6" />
+    <link rel="stylesheet" href="style.css?v=7" />
   </head>
   <body>
     <div class="title">FISHING BATTLE</div>
     <div id="game"></div>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <script>
+      // Fresh-start guard: if the player loaded this page once, drop any save that
+      // came from a broken earlier build. Skipped on subsequent visits so progress
+      // persists from this point on.
+      try {
+        if (!localStorage.getItem("fishingBattle.freshStart.v7")) {
+          localStorage.removeItem("fishingBattle.save.v1");
+          localStorage.removeItem("fishingBattle.save.v2");
+          localStorage.setItem("fishingBattle.freshStart.v7", "1");
+        }
+      } catch (e) {}
+    </script>
     <script src="game-v7.js"></script>
   </body>
 </html>
